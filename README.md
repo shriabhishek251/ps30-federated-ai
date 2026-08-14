@@ -13,6 +13,13 @@ meaningfully by Age to simulate demographically distinct clients.
 ## Status
 
 - [x] Day 1 — project structure, baseline model
+      - accuracy=0.7241, precision=0.309, recall=0.791, f1=0.444, **roc_auc=0.826**
+      - trained with `pos_weight=6.18` (loss-reweighted for class imbalance)
+      - operating threshold locked at **0.50** (79% recall / 31% precision) —
+        chosen deliberately for a screening use case; see `src/threshold_analysis.py`
+        for the full precision/recall sweep and reasoning
+      - this threshold must be reused for every later phase's evaluation,
+        so federated/DP results stay comparable to this baseline
 - [ ] Day 2 — Flower FedAvg loop
 - [ ] Day 3 — Opacus differential privacy
 - [ ] Day 4 — secure aggregation + Streamlit dashboard
