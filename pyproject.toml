@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ps30federated"
+version = "1.0.0"
+description = "PS30 -- Privacy-Preserving Federated AI Platform"
+license = "Apache-2.0"
+dependencies = [
+    "flwr[simulation]>=1.8",
+    "torch>=2.1",
+    "pandas>=2.0",
+    "scikit-learn>=1.3",
+    "joblib>=1.3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.flwr.app]
+publisher = "ps30team"
+
+[tool.flwr.app.components]
+serverapp = "fl_app.server_app:app"
+clientapp = "fl_app.client_app:app"
+
+# Defaults here -- override any of these without touching code, e.g.:
+#   flwr run . --run-config "num-server-rounds=15 local-epochs=3"
+[tool.flwr.app.config]
+num-server-rounds = 10
+local-epochs = 2
+learning-rate = 0.001
+batch-size = 128
+fraction-evaluate = 1.0
+
+
+#######################################################################
+# CONFIGURATION MIGRATION NOTICE:
+#
+# What was previously called "federation config" for SuperLink
+# connections in pyproject.toml has been renamed and moved.
+#
+# These settings are now **SuperLink connection configuration**
+# and are defined in the Flower configuration file.
+#
+# The entries below are commented out intentionally and are kept
+# only as a migration reference.
+#
+# Docs: https://flower.ai/docs/framework/ref-flower-configuration.html
+#######################################################################
+
+# [tool.flwr.federations]
+# default = "local-simulation"
+
+# # num-supernodes = 4 to match our 4 pre-partitioned client shards exactly
+# [tool.flwr.federations.local-simulation]
+# options.num-supernodes = 4
