@@ -24,6 +24,7 @@ import tempfile
 import joblib
 import pandas as pd
 import torch
+from opacus import PrivacyEngine
 from torch.utils.data import DataLoader, TensorDataset
 
 # Identical resolution logic to src/data_loader.py, and it has to be
@@ -124,6 +125,62 @@ def train_fn(model, dataloader, epochs, lr, device) -> float:
             running_loss += loss.item()
             n_batches += 1
     return running_loss / max(n_batches, 1)
+
+
+def train_fn_dp(model, dataloader, epochs, lr, device,
+                 target_epsilon, target_delta, max_grad_norm):
+    """
+    Local training with Opacus DP-SGD: clips each individual example's
+    gradient to max_grad_norm, adds calibrated Gaussian noise, and solves
+    for exactly how much noise achieves target_epsilon after `epochs`
+    local epochs over THIS client's shard -- you specify the privacy
+    target, Opacus works out the noise level.
+
+    SIMPLIFICATION worth stating in the pitch: this is a PER-ROUND,
+    PER-CLIENT budget -- a fresh PrivacyEngine every round, not one
+    budget tracked cumulatively across all N federated rounds. True
+    cumulative privacy loss across a full run is higher than this
+    nominal per-round number (standard DP composition). Tracking one
+    cumulative budget across FL rounds is real, active DP-FL research,
+    deliberately out of scope for a 5-day build.
+    """
+    model.to(device)
+    pos_weight = torch.tensor([GLOBAL_POS_WEIGHT]).to(device)
+    criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+
+    privacy_engine = PrivacyEngine()
+    dp_model, dp_optimizer, dp_dataloader = privacy_engine.make_private_with_epsilon(
+        module=model,
+        optimizer=optimizer,
+        data_loader=dataloader,
+        epochs=epochs,
+        target_epsilon=target_epsilon,
+        target_delta=target_delta,
+        max_grad_norm=max_grad_norm,
+    )
+
+    dp_model.train()
+    running_loss, n_batches = 0.0, 0
+    for _ in range(epochs):
+        for xb, yb in dp_dataloader:
+            xb, yb = xb.to(device), yb.to(device)
+            dp_optimizer.zero_grad()
+            loss = criterion(dp_model(xb), yb)
+            loss.backward()
+            dp_optimizer.step()
+            running_loss += loss.item()
+            n_batches += 1
+
+    epsilon_spent = privacy_engine.get_epsilon(delta=target_delta)
+
+    # unwrap back to a plain module so .state_dict() keys match what the
+    # server/ArrayRecord expects -- GradSampleModule is designed to be
+    # drop-in compatible, but unwrap explicitly rather than assume
+    clean_model = dp_model._module if hasattr(dp_model, "_module") else dp_model
+
+    avg_loss = running_loss / max(n_batches, 1)
+    return clean_model, avg_loss, epsilon_spent
 
 
 def eval_fn(model, dataloader, device):
