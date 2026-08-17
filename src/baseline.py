@@ -26,6 +26,7 @@ METRICS_DIR = os.path.join(os.path.dirname(__file__), "..", "metrics")
  
  
 def train_baseline(epochs: int = 20, lr: float = 1e-3, batch_size: int = 256):
+    torch.manual_seed(42)  # reproducible weight init -- same numbers every demo run
     X, y, feature_names = load_data()
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
