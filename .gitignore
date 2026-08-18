@@ -1,20 +1,34 @@
-# env
+# Virtual Environments & Python Cache
 .venv/
 venv/
+env/
 __pycache__/
-*.pyc
- 
-# data & artifacts (never commit raw data or trained weights)
+*.py[cod]
+*$py.class
+
+# Raw Data & Large Datasets (Keeps GitHub repo lightweight)
 data/*.csv
 data/*.parquet
+data/*.zip
+
+# Heavy Model Weights & Checkpoints (Never commit large binaries)
 *.pt
 *.pth
+*.bin
+*.ckpt
 checkpoints/
- 
-# metrics produced by training runs — regenerated, not source
-metrics/*.json
- 
-# OS/editor
+
+# Metrics JSONs: TRACKED for Streamlit Cloud!
+# (Only ignore temporary/log artifacts if any, but keep .json and .pkl)
+!metrics/*.json
+!metrics/*.pkl
+
+# OS & IDE Configuration
 .DS_Store
+Thumbs.db
 .vscode/
 .idea/
+
+# Local Flower / Streamlit runtime artifacts
+.flwr/
+.streamlit/
