@@ -27,10 +27,23 @@ def _as_bool(value) -> bool:
 @app.train()
 def train(msg: Message, context: Context) -> Message:
     partition_id = context.node_config["partition-id"]
+    
+    # --- DAY 5 BONUS: SIMULATED CLIENT DROPOUT ---
+    # Flower automatically inserts the round number in the message config.
+    server_round = int(msg.content["config"].get("server-round", msg.content["config"].get("server_round", 1)))
+    
+    if server_round == 5 and partition_id == 1:
+        print("\n[!] 💥 CRITICAL: SIMULATING NETWORK FAILURE! Client 1 dropping offline mid-round!\n")
+        raise RuntimeError("Simulated hospital power outage / network failure.")
+    # ---------------------------------------------
+    
     batch_size = int(context.run_config["batch-size"])
     local_epochs = int(context.run_config["local-epochs"])
     use_dp = _as_bool(context.run_config["use-dp"])
     lr = float(msg.content["config"]["lr"])
+    
+    # Extracting the total rounds from the config so we can calculate true cumulative privacy
+    total_rounds = int(context.run_config.get("num-rounds", 10))
 
     model = get_model()
     model.load_state_dict(msg.content["arrays"].to_torch_state_dict())
@@ -43,9 +56,12 @@ def train(msg: Message, context: Context) -> Message:
         target_epsilon = float(context.run_config["target-epsilon"])
         target_delta = float(context.run_config["target-delta"])
         max_grad_norm = float(context.run_config["max-grad-norm"])
+        
+        # DAY 5 FIX: Pass total_rounds into train_fn_dp for cumulative Opacus tracking
         model, avg_loss, epsilon_spent = train_fn_dp(
             model, dataloader, local_epochs, lr, device,
             target_epsilon, target_delta, max_grad_norm,
+            total_rounds  # <--- New parameter passed to task.py
         )
         metrics["epsilon_spent"] = float(epsilon_spent)
         metrics["dp_enabled"] = 1.0

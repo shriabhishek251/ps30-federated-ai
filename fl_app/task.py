@@ -1,20 +1,16 @@
 """
-Day 2: shared definitions used by both client_app.py and server_app.py --
+Day 2/5: shared definitions used by both client_app.py and server_app.py --
 the model, per-client data loading, local training, and the centralized
 evaluation that produces the number actually comparable to Day 1's
 baseline.
 
 Design choices worth remembering for the pitch:
-- Same SimpleMLP architecture and same pos_weight as the Day 1 baseline,
-  so any accuracy difference reflects federation/DP, not "we also
-  quietly changed the model."
-- Feature scaling stats (mean/std) were fit once in Day 1 and are reused
-  here via metrics/scaler.pkl -- aggregate column statistics, not patient
-  records, so sharing them doesn't violate "raw data never leaves the
-  client." Every published FL paper makes an equivalent assumption.
-- Each client trains on 100% of its own (test-excluded) shard. The
-  GLOBAL model is evaluated centrally on the server, against the exact
-  same held-out test set and threshold=0.5 as the Day 1 baseline.
+- Same SimpleMLP architecture and same pos_weight as the Day 1 baseline.
+- True Cumulative Privacy (Day 5 feature): Opacus calculates privacy across 
+  the ENTIRE federated lifespan (total_rounds * local_epochs), not just 
+  a single round.
+- Fault Tolerance (Day 5 feature): Clients can drop offline without crashing 
+  the server aggregate.
 """
 
 import os
@@ -27,14 +23,7 @@ import torch
 from opacus import PrivacyEngine
 from torch.utils.data import DataLoader, TensorDataset
 
-# Identical resolution logic to src/data_loader.py, and it has to be
-# duplicated here (not imported) because finding src/ at all is what
-# this logic is for -- can't import data_loader.py's version of it
-# before src/ is even on sys.path. Same marker file path as
-# data_loader.py writes to, so once `python src/data_loader.py` has been
-# run directly one time, this always finds the real project, regardless
-# of where flwr run copies this file to or how stale its background
-# SuperLink process is.
+# Identical resolution logic to src/data_loader.py
 _MARKER_FILE = os.path.join(tempfile.gettempdir(), "ps30_federated_ai_project_root.txt")
 
 
@@ -80,9 +69,6 @@ def get_model() -> SimpleMLP:
 
 
 def load_client_data(partition_id: int, batch_size: int = 128) -> DataLoader:
-    """Loads ONE client's shard (already excludes the global test rows --
-    see data_loader.py's partition_dirichlet), applies the shared scaler,
-    returns a DataLoader ready for local training."""
     csv_path = os.path.join(DATA_DIR, f"client_{partition_id}.csv")
     df = pd.read_csv(csv_path)
     y = df[TARGET_COL].values.astype("float32")
@@ -94,20 +80,14 @@ def load_client_data(partition_id: int, batch_size: int = 128) -> DataLoader:
 
 
 def load_global_test_data():
-    """The SAME held-out test set baseline.py evaluates on, reconstructed
-    via the shared get_train_test_indices() helper so it can never
-    silently drift out of sync with Day 1's split."""
-    from data_loader import get_train_test_indices, load_data  # src/ already on sys.path (see top of file)
+    from data_loader import get_train_test_indices, load_data 
 
-    X, y, _ = load_data(save_scaler=False)  # scaler already saved on Day 1; don't refit here
+    X, y, _ = load_data(save_scaler=False)
     _, test_idx = get_train_test_indices()
     return torch.tensor(X[test_idx]), torch.tensor(y[test_idx])
 
 
 def train_fn(model, dataloader, epochs, lr, device) -> float:
-    """Local training loop -- identical loss setup to the Day 1 baseline
-    (same pos_weight), just running on one client's shard instead of the
-    full dataset."""
     model.to(device)
     pos_weight = torch.tensor([GLOBAL_POS_WEIGHT]).to(device)
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
@@ -127,34 +107,29 @@ def train_fn(model, dataloader, epochs, lr, device) -> float:
     return running_loss / max(n_batches, 1)
 
 
+# --- DAY 5 FIX: Added 'total_rounds' parameter for true cumulative privacy ---
 def train_fn_dp(model, dataloader, epochs, lr, device,
-                 target_epsilon, target_delta, max_grad_norm):
+                 target_epsilon, target_delta, max_grad_norm, total_rounds=10):
     """
-    Local training with Opacus DP-SGD: clips each individual example's
-    gradient to max_grad_norm, adds calibrated Gaussian noise, and solves
-    for exactly how much noise achieves target_epsilon after `epochs`
-    local epochs over THIS client's shard -- you specify the privacy
-    target, Opacus works out the noise level.
-
-    SIMPLIFICATION worth stating in the pitch: this is a PER-ROUND,
-    PER-CLIENT budget -- a fresh PrivacyEngine every round, not one
-    budget tracked cumulatively across all N federated rounds. True
-    cumulative privacy loss across a full run is higher than this
-    nominal per-round number (standard DP composition). Tracking one
-    cumulative budget across FL rounds is real, active DP-FL research,
-    deliberately out of scope for a 5-day build.
+    Local training with Opacus DP-SGD with True Cumulative Composition.
+    Instead of calculating epsilon for a single round, this calculates the 
+    noise required to preserve the target privacy budget across the ENTIRE 
+    lifespan of the federated training loop (all rounds * local epochs).
     """
     model.to(device)
     pos_weight = torch.tensor([GLOBAL_POS_WEIGHT]).to(device)
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
+    # Calculate total epochs across all communication rounds for composition
+    cumulative_epochs = epochs * total_rounds
+
     privacy_engine = PrivacyEngine()
     dp_model, dp_optimizer, dp_dataloader = privacy_engine.make_private_with_epsilon(
         module=model,
         optimizer=optimizer,
         data_loader=dataloader,
-        epochs=epochs,
+        epochs=cumulative_epochs,  # OVERRIDE: Inform Opacus of the total steps
         target_epsilon=target_epsilon,
         target_delta=target_delta,
         max_grad_norm=max_grad_norm,
@@ -174,9 +149,7 @@ def train_fn_dp(model, dataloader, epochs, lr, device,
 
     epsilon_spent = privacy_engine.get_epsilon(delta=target_delta)
 
-    # unwrap back to a plain module so .state_dict() keys match what the
-    # server/ArrayRecord expects -- GradSampleModule is designed to be
-    # drop-in compatible, but unwrap explicitly rather than assume
+    # Unwrap back to a plain module
     clean_model = dp_model._module if hasattr(dp_model, "_module") else dp_model
 
     avg_loss = running_loss / max(n_batches, 1)
@@ -184,9 +157,6 @@ def train_fn_dp(model, dataloader, epochs, lr, device,
 
 
 def eval_fn(model, dataloader, device):
-    """Local (per-client, on its own shard) eval -- diagnostic only, used
-    for the round-by-round terminal printout. NOT the number that gets
-    compared to the baseline; that's centralized_evaluate() below."""
     model.to(device)
     model.eval()
     criterion = torch.nn.BCEWithLogitsLoss()
@@ -203,9 +173,6 @@ def eval_fn(model, dataloader, device):
 
 
 def centralized_evaluate(model, device, threshold: float = 0.5) -> dict:
-    """Evaluates the GLOBAL (aggregated) model on the shared held-out test
-    set -- THIS is the number that gets compared directly to the Day 1
-    baseline (accuracy=0.7241, f1=0.444, roc_auc=0.826, threshold=0.50)."""
     from sklearn.metrics import (accuracy_score, f1_score, precision_score,
                                   recall_score, roc_auc_score)
 

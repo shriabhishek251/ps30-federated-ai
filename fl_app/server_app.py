@@ -67,7 +67,15 @@ def main(grid: Grid, context: Context) -> None:
     model = get_model()
     initial_arrays = ArrayRecord(model.state_dict())
 
-    strategy = FedAvg(fraction_evaluate=fraction_evaluate)
+    # --- DAY 5 BONUS: FAULT TOLERANCE ---
+    # We explicitly tell FedAvg to tolerate node dropouts.
+    strategy = FedAvg(
+        fraction_evaluate=fraction_evaluate,
+        fraction_train=1.0,           # Sample 100% of nodes
+        min_available_nodes=4,        # Wait for all 4 nodes to connect initially
+        min_train_nodes=3,            # OVERRIDE: Proceed as long as 3 nodes succeed
+    )
+    # ------------------------------------
 
     device = torch.device("cpu")
     history: list = []
@@ -75,7 +83,7 @@ def main(grid: Grid, context: Context) -> None:
     result = strategy.start(
         grid=grid,
         initial_arrays=initial_arrays,
-        train_config=ConfigRecord({"lr": lr}),
+        train_config=ConfigRecord({"lr": lr, "num-rounds": num_rounds}), # Pass num-rounds to clients securely
         num_rounds=num_rounds,
         evaluate_fn=make_global_evaluate(device, history),
     )
