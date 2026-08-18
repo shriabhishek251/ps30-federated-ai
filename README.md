@@ -391,7 +391,7 @@ This protects against:
 
 Try the deployed FedShield-AI Governance Dashboard:
 
-🔗 Demo Link: <YOUR_STREAMLIT_LINK>
+🔗 Demo Link: <https://ps30-federated-ai.streamlit.app/>
 
 
 ---
