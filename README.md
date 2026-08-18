@@ -385,6 +385,33 @@ This protects against:
 - gradient leakage
 - malicious aggregation inspection
 
+
+---
+
+# 📅 Development Roadmap (5-Day Engineering Sprint)
+
+- [x] **Day 1: Centralized Baseline & Imbalance Analysis**
+  - Configured PyTorch `SimpleMLP` benchmark on CDC Diabetes Indicators.
+  - Implemented loss-reweighting (`pos_weight = 6.18`) to handle severe minority-class imbalance.
+  - Established performance ceiling: **ROC-AUC = 0.8262**.
+
+- [x] **Day 2: Federated Infrastructure & Non-IID Partitioning**
+  - Integrated Flower (`flwr`) `ServerApp` / `ClientApp` simulation over 4 hospital nodes.
+  - Partitioned data with Dirichlet ($\alpha = 0.5$) distribution across label distributions.
+  - Validated strict train/test boundary isolation to prevent data leakage.
+
+- [x] **Day 3: Differential Privacy Integration**
+  - Integrated Opacus DP-SGD with per-sample clipping (`max_grad_norm = 1.0`).
+  - Executed privacy sweeps across $\varepsilon \in \{1.0, 4.0, 8.0\}$ and analyzed the Gradient Clipping Paradox.
+
+- [x] **Day 4: Cryptographic Zero-Trust Security & Analytics UI**
+  - Implemented standalone pairwise masking proof (`src/secure_agg.py`) with zero floating-point error.
+  - Built interactive Streamlit governance dashboard (`dashboard/app.py`).
+
+- [x] **Day 5: Chaos Engineering & Cumulative Privacy Composition**
+  - Engineered fault-tolerant aggregation to withstand catastrophic mid-round client failure (Client 1 crash at Round 5).
+  - Upgraded privacy tracking to Multi-Round Rényi DP composition for full lifecycle accounting.
+  - Deployed live cloud demonstration on Streamlit Community Cloud.
 ---
 
 # 🌐 Live Demo
